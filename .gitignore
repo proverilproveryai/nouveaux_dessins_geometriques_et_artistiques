@@ -1,0 +1,6 @@
+# TouchDesigner incremental saves and backups
+Backup/
+*.[0-9]*.toe
+CrashAutoSave*
+# macOS
+.DS_Store

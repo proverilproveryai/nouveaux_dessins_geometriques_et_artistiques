@@ -1,3 +1,148 @@
+# Nouveaux dessins géométriques et artistiques — TouchDesigner POPs / laser port
+
+This fork adds a **TouchDesigner** port of all **300 drawings** from Jean-Paul Delahaye's 1985 book. It builds on [v3ga's p5.js recoding](https://github.com/v3ga/nouveaux_dessins_geometriques_et_artistiques).
+
+- **GPU only.** Every point of every drawing is computed on the GPU in compute shaders (POPs, the TD 2024+ operator family). There is no JavaScript, and Python never touches the geometry.
+- **Laser-ready.** The output is separate polylines, so it can feed a laser projector directly.
+- **Live.** Drawings can be switched and their parameters changed in real time.
+
+The [original README](#original-project-v3ga) follows below, unchanged.
+
+<p>
+<img src="touchdesigner/img/dessin_42.png" width="24%" /> <img src="touchdesigner/img/dessin_60.png" width="24%" /> <img src="touchdesigner/img/dessin_92.png" width="24%" /> <img src="touchdesigner/img/dessin_146.png" width="24%" />
+<img src="touchdesigner/img/dessin_188.png" width="24%" /> <img src="touchdesigner/img/dessin_222.png" width="24%" /> <img src="touchdesigner/img/dessin_283.png" width="24%" /> <img src="touchdesigner/img/dessin_29.png" width="24%" />
+</p>
+
+*DESSIN 42, 60, 92, 146 / 188, 222, 283, 29, rendered by the TouchDesigner preview. For comparison, the book's plotter output of [146](img/NOUVEAU_DESSIN_GEOMETRIQUE_146.png) and [188](img/NOUVEAU_DESSIN_GEOMETRIQUE_188.png).*
+
+## Contents
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Parameters](#parameters)
+- [How it works](#how-it-works)
+- [Laser output](#laser-output)
+- [Differences from the book](#differences-from-the-book)
+- [Files](#files)
+- [Credits and license](#credits-and-license)
+
+## Requirements
+- **TouchDesigner 2025.x** with POPs. The project was built and tested on **2025.33230** (macOS). Opening it in an older build may break it.
+- **GPU.** Any GPU that runs TouchDesigner POPs. On macOS (Metal) all scans run in `float`, because `double` attributes are not supported there.
+- **Laser, optional.** Two ways out:
+  - any DAC supported by the *Laser CHOP* / *Laser Device CHOP* (Helios, Ether Dream, ShowNET);
+  - **Pangolin Beyond** through the *Pangolin CHOP*, which works on **Windows only**.
+
+## Quick start
+1. Open `nouveaux_dessins_geometriques_et_artistiques.toe`.
+2. Go into `/project1/ndga`.
+3. On the **Global** page, turn **Dessin** (1–300). It uses the same numbers as the book and the p5.js sketches. The right engine is selected automatically.
+4. Watch `ndga/preview`, an orthographic render of exactly what goes to the laser.
+
+## Parameters
+Everything is on the custom pages of `/project1/ndga`:
+
+| Page | What |
+|---|---|
+| **Global** | **Dessin** (1–300), Engine (read-only), Scale, Autofit (GPU fit to frame), Rotate, Offset, laser Color, animation Speed, Points (readout) |
+| **Random** | **Seed**, plus *Drift seeds over time* and Drift Speed (seeds morph smoothly, no popping) |
+| **Laser** | Send to Beyond (**off by default**), Beyond Zone, Rate, Vector frame, Point Budget and Over Budget readout |
+| Polar, Morph, Circles, Koch, Motif, Lines, Field, Implicit, IFS, Glyph, Turtle | live parameters for each engine: resolution / density, depth offsets, phase / warp / twist, animation toggles |
+
+## How it works
+
+### One contract for every engine
+The book's programs drive a pen plotter:
+- `M x,y` lifts the pen and moves it;
+- `D x,y` draws a line to the point.
+
+A drawing is therefore a sequence of polylines, which is exactly what a laser needs. Every engine follows the same chain:
+
+```
+meta (per-DESSIN constants from the book)
+  → pts          gridPOP, N points (N = upper bound)
+  → gen          glsladvancedPOP: writes P, LineBreak (= plotter "M"), [Alive]
+  → [cull]       deletePOP Alive == 0     (paths of variable length, pruned trees, unused glyph rows)
+  → strips       linebreakPOP             (one line strip per pen-down run)
+  → out
+```
+
+The engine outputs are then combined:
+
+```
+switch_engine → autofit → fit (scale / rotate / offset) → laser_color → out_laser
+```
+
+The output space is `x, y ∈ [-1, 1]`, y-up; the book's 480-pixel plotter space is normalised to it. Everything is computed in `float`, without the `int()` rounding of the plotter strings. This removes duplicate and zero-length points.
+
+### Engines
+
+| Engine | DESSIN | GPU mapping |
+|---|---|---|
+| `engine_motif` | 1–20 | thread = (copy, vertex). The copy index is decoded in mixed radix into the K transforms (mirrors, rotations, lattice). |
+| `engine_glyph` | 21–29, 287–300 | Faces and crowd glyphs come from a table fed to the shader through `dattoPOP`. Thread = (instance, table row); rows that are not the instance's glyph are culled. |
+| `engine_polar` | 30–59 | thread = point. The formulas are a `switch` on DESSIN. |
+| `engine_koch` | 60–69 | Each vertex is computed **directly from the base-4 digits of its index** (sum of sub-generator chords × Gᵈ). No scan is needed, and the generator angle is a live parameter. |
+| `engine_lines` | 70–73, 213–246 | Independent segments: Cantor chords, moirés, projections of K-dimensional hypercubes (with a live rotation of the projection basis). |
+| `engine_turtle` | 74–76, 143–212 | See below. |
+| `engine_field` | 77–122 | Needles and streamlines. Thread = (seed, step j) integrates j Euler steps; leaving the unit square culls the rest. |
+| `engine_morph` | 123–142 | thread = (layer, point). In-betweens of two Lissajous curves, or of a Lissajous curve and a square. |
+| `engine_implicit` | 247–250 | Random walks inside F(x,y) < 0. The walk is serial, so **one thread walks one seed** and writes all of its slots. |
+| `engine_circles` | 251–266 | thread = (cell, segment). The radius is proportional to the field F(x,y). |
+| `engine_ifs` | 267–286 | thread = (level, copy, vertex). The base-K digits of the copy index pick the chain of maps; every level is drawn, as in the book. |
+
+### The turtle (generalised Koch) engine
+This is the largest family: 73 drawings in total — 143–182 general fractals, 183–212 their rounded variants, and 74–76. In the book a turtle walks step by step, but the heading and length of each step depend **only on the digits of the step index**. Flags B, E, C and D mirror, reverse, stop and lift the pen. This makes the walk parallel:
+
+- **Steps.** `gen` computes every step vector independently.
+- **Positions.** `scan` (`accumulatePOP`) turns the steps into positions with a prefix sum.
+- **Placement.** `place` resets the sum for each curve and applies the per-drawing framing fixes of the p5 port.
+- **Rounding.** `round` (183–212) replaces every corner with the book's quarter-ellipse, S+1 points per step.
+- **Pruned trees.** Flag **C** prunes whole subtrees; for example, 177 walks 5¹⁰ ≈ 9.7M indices to draw about 4k steps. Threads are numbered by **live leaf** instead. Each thread turns its leaf ordinal into a digit path using subtree leaf counts `leaves(d) = n_terminal + n_recursive · leaves(d−1)`, so no thread is wasted.
+- **74–76.** The heading is `AA · Σ(min(v(j), K−1) + 1)`, where v is the (N−1)-adic valuation. It is computed in closed form with Legendre's formula `Σ floor(i / bᵗ)`.
+
+### Shader sources
+The compute shaders live inside the `.toe`, in the `shader` DAT of each engine. A plain-text copy is exported to [`touchdesigner/shaders/`](touchdesigner/shaders) for reading and diffing on GitHub; the `.toe` is the source of truth. Each shader starts with a header comment that explains its mapping. `ndga/agents_md` inside the project documents the network, the traps and the deviations.
+
+## Laser output
+- **`laser_preview`** — a *Laser CHOP* (`source = pop`, `pop = out_laser`). It works on any OS and shows what a DAC would receive: separate shapes, with blanking between them. Connect it to a *Laser Device CHOP* for Helios / Ether Dream / ShowNET.
+- **`beyond_out/pangolin_out`** — a *Pangolin CHOP* (`source = pop`) for Pangolin Beyond, **Windows only**. On other systems the `os_guard` Execute DAT freezes this COMP so it does not show errors. Laser → *Send to Beyond* is **off by default**: enabling it can fire a real laser.
+- **Point budget.** Many drawings are far denser than a laser can scan. Examples: the circle grids 257–266 reach 250k–440k points, turtle 157 reaches 117k. Watch *Points* / *Over Budget*, and reduce density with the engine pages: Circles grid N, Field seeds / steps, Implicit seeds / max steps, Turtle / IFS / Koch depth offsets, Lines density.
+- **Autofit.** Some drawings leave the frame, as they already do in the book (see below). *Autofit* fits any drawing into ±0.95 on the GPU.
+
+## Differences from the book
+Deliberate changes:
+- **Randomness.** Random drawings (77–102, 247–250, 287–291, 298–300) use a **seeded** hash instead of an unseeded `random()`: same Seed, same drawing. *Drift* animates it.
+- **153–161.** Depth is capped so that a curve has at most 300k steps: 158–161 are drawn at K = 6, while the book asks for 7⁷ … 7¹⁰ steps.
+- **247–250.** Random walks are capped at *Max Steps*; the book leaves them unbounded. The default is 20 % of the book's seeds.
+- **Lone points.** Threads or walks that would produce a single point (leaving on the first step) are dropped, because a lone point is a hot dot on a laser.
+- **74–76.** The closing segment of `TRACE` (end → start) is omitted.
+- **Circle grids.** Every circle uses a fixed number of segments. In the book the segment count equals the pixel radius, so small circles turn into triangles and diamonds.
+- **Koch.** Layers with a smaller depth are resampled to a common point count. When the generator angle is not 60°, the curve is renormalised so that the polygons stay closed.
+
+Kept as in the p5 port (the book images show the same):
+- 300 overflows at the bottom;
+- 130, 135, 137, 142 and motifs 12 and 18 leave the frame (use Autofit);
+- 67, 91 and 126 are marked *"output not correct"* by the p5 port itself.
+
+## Files
+```
+nouveaux_dessins_geometriques_et_artistiques.toe   the TouchDesigner project (everything lives in /project1/ndga)
+touchdesigner/shaders/*.glsl                       exported compute shaders (one per engine; turtle: + _place, _round)
+touchdesigner/img/                                 preview renders used in this README
+sketches/, img/                                    original p5.js sketches and book renders by v3ga
+```
+
+## Credits and license
+- **Programs and book:** [Jean-Paul Delahaye](https://fr.wikipedia.org/wiki/Jean-Paul_Delahaye), *Nouveaux dessins géométriques et artistiques avec votre micro-ordinateur*, Eyrolles, 1985.
+- **p5.js recoding, parser library and gallery:** [v3ga](https://github.com/v3ga/nouveaux_dessins_geometriques_et_artistiques). With thanks to Jean-Noël Lafargue and Éric Schrafstetter, credited in the original README below.
+- **TouchDesigner POPs / laser port:** this fork.
+
+This fork is distributed under the same license as the original repository, the **GNU General Public License v2.0**; see [LICENSE](LICENSE).
+
+---
+
+# Original project (v3ga)
+
 # Nouveaux dessins géométriques et artistiques avec votre micro-ordinateur
 
 👉 [https://editor.p5js.org/v3ga/collections/Q6wJic-1k](https://editor.p5js.org/v3ga/collections/Q6wJic-1k)
