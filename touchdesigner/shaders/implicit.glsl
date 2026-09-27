@@ -70,6 +70,6 @@ void main()
 			alive = inside(X, Y, F(X, Y));
 		}
 	}
-	// a walk that never left its seed is a lone point (a hot dot on a laser): drop it
+	// a walk that never left its seed is a lone point (a degenerate stroke): drop it
 	if (written < 2) oTDPoint_Alive[base] = 0;
 }

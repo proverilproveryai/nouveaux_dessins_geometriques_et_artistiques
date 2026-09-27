@@ -145,7 +145,7 @@ void main()
 		P = vec2(X, Y);
 		if (j == 0)
 		{
-			// a seed whose very first step leaves the square is a lone point (a hot dot on a laser): drop it
+			// a seed whose very first step leaves the square is a lone point (a degenerate stroke): drop it
 			float AN = threadAngle(uD, X, Y) + uK.y;
 			vec2 q = vec2(X, Y) + K * vec2(cos(AN), sin(AN));
 			if (!(q.x > 0.0 && q.x < 1.0 && q.y > 0.0 && q.y < 1.0)) alive = 0;

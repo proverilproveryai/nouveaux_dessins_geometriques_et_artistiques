@@ -1,7 +1,7 @@
 // NDGA "Grilles de cercles", DESSIN 251-266: one circle per cell of an (N+1)^2 grid,
 // radius proportional to a scalar field F(x,y) chosen by DESSIN.
 // Book draws R+1 points where R is the radius in plotter pixels; here every circle gets a
-// fixed Seg+1 points (closed strip) so the laser sees uniform sampling.
+// fixed Seg+1 points (closed strip) so every circle has uniform sampling.
 // Uniforms: uD dessin, uGS = (N grid, Seg), uRR = cell radius factor, uField = (pan x, pan y, phase)
 // The phase is added inside the fract() terms (Z - floor(Z)) and animates the field bands.
 

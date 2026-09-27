@@ -96,7 +96,7 @@ void main()
 	vec2 P1 = vec2(XC, YC) + Rr * cexp(W1);
 	vec2 z0 = P1 - P0;
 
-	// resample depth-K edge onto the fixed 4^Kmax + 1 vertex budget
+	// resample depth-K edge onto the fixed 4^Kmax + 1 vertex count
 	int d = 1;
 	for (int t = 0; t < Kmax - K; t++) d *= NG;
 	int j = v / d;
