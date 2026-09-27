@@ -1,3 +1,230 @@
+**English** · [Русский](README.ru.md)
+
+# Nouveaux dessins géométriques et artistiques — TouchDesigner POPs port
+
+**A vector drawing generator for TouchDesigner.** This fork redraws all **300 drawings** from Jean-Paul Delahaye's 1985 book as live **vectors** — polylines computed on the GPU with POPs. What you do with them is up to you:
+- render them in your own scene;
+- turn them into SOPs or CHOPs;
+- send them to a laser or a plotter;
+- instance on them or process them further with POPs.
+
+It builds on [v3ga's p5.js recoding](https://github.com/v3ga/nouveaux_dessins_geometriques_et_artistiques).
+
+<img src="touchdesigner/img/perform.png" width="100%" />
+
+*Perform mode (F1): DESSIN 188, coloured by a circular ramp through the Texture page (Polar coordinate).*
+
+- **Vectors, not pixels.** The output is a POP of separate line strips: `P` in ±1, an int `LineBreak` at the start of each line and a float4 `Color` per point. Resolution-independent, and every line stays a line.
+- **GPU only.** Every point of every drawing is computed in compute shaders (POPs, the TD 2024+ operator family). There is no JavaScript, and Python never touches the geometry.
+- **Texture colouring.** Any TOP can colour the lines. The lookup coordinate can be position, angle, arc length, strip or point index.
+- **Live.** Switch drawings and change their parameters in real time, or drive any parameter from audio.
+
+The [original README](#original-project-v3ga) follows below, unchanged.
+
+<p>
+<img src="touchdesigner/img/dessin_42.png" width="24%" /> <img src="touchdesigner/img/dessin_60.png" width="24%" /> <img src="touchdesigner/img/dessin_92.png" width="24%" /> <img src="touchdesigner/img/dessin_146.png" width="24%" />
+<img src="touchdesigner/img/dessin_188.png" width="24%" /> <img src="touchdesigner/img/dessin_222.png" width="24%" /> <img src="touchdesigner/img/dessin_283.png" width="24%" /> <img src="touchdesigner/img/dessin_29.png" width="24%" />
+</p>
+
+*DESSIN 42, 60, 92, 146 / 188, 222, 283, 29, rendered by the TouchDesigner preview. For comparison, the book's plotter output of [146](img/NOUVEAU_DESSIN_GEOMETRIQUE_146.png) and [188](img/NOUVEAU_DESSIN_GEOMETRIQUE_188.png).*
+
+## Contents
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Using the output](#using-the-output)
+- [Interface](#interface)
+- [Parameters](#parameters)
+- [Texture](#texture)
+- [How it works](#how-it-works)
+- [Differences from the book](#differences-from-the-book)
+- [Files](#files)
+- [Credits and license](#credits-and-license)
+
+## Requirements
+- **TouchDesigner 2025.x** with POPs. The project was built and tested on **2025.33230**.
+- **GPU.** Any GPU that runs TouchDesigner POPs. On macOS (Metal) all scans run in `float`, because `double` attributes are not supported there.
+
+## Quick start
+1. Open `nouveaux_dessins_geometriques_et_artistiques.toe`.
+2. Press **F1** for Perform mode. It opens the `ndga/UI` control panel.
+3. Pick a drawing with **Dessin** (1–300). It uses the same numbers as the book and the p5.js sketches, and the right engine is selected automatically.
+4. Take the vectors from `ndga/out1` into your own network (see below).
+
+Everything lives in `/project1/ndga`. The ramp next to it (`ramp1` → `lookuptext`) is the demo texture.
+
+## Using the output
+`ndga` has two outputs:
+- **`out1`** (POP) — the vectors;
+- **`out2`** (TOP) — a ready-made preview render.
+
+Inside, `out1` is fed by `ndga/out_vector`. What you get:
+- **Geometry.** Line strips in the square `x, y ∈ [-1, 1]` (y-up, z = 0). One strip is one pen-down run of the book's plotter.
+- **Attributes.** `LineBreak` (int, 1 at the first point of each strip) and `Color` (float4).
+
+Some ways to use it:
+- **Render.** A *Geometry COMP* with a *Line MAT* (it reads `Color`) — exactly what `ndga/preview` does.
+- **Working with POPs.** Transform, noise, trail, resample, copy onto points, instancing.
+- **Export.** Write the points out (for example with a *POP to DAT*) for a plotter, SVG or any other vector format.
+
+The line count and point count change with the drawing: `Points` on the Global page shows the current total.
+
+## Interface
+`ndga/UI` is a control surface over the custom parameters of `ndga` (the screenshot above). It holds no state of its own, so `ndga` stays the single source of truth.
+
+- **Header.**
+  - `<` / `>` step through the drawings; the mouse wheel over the big number does the same.
+  - Next to them: the book chapter and program name, a Dessin slider / number field, the active engine, and the point count.
+- **Preview.** The live drawing.
+- **Sidebar.** Native Parameter COMPs, four sections:
+  - **Global**;
+  - the page of the **active engine** (it switches with the drawing);
+  - **Random** — says whether the current drawing uses randomness at all, and is greyed out when it does not (see below);
+  - **Texture**.
+
+### Random
+Only drawings that draw random numbers react to the **Random** page. After checking the book code, they are:
+- 77–102 — needles and threads from random seeds;
+- 247–250 — random walks;
+- 287, 288, 290, 291 and 297–300 — crowds with random placement or jitter.
+
+Controls:
+- **Seed** picks a variation: the same seed always gives the same drawing.
+- **Drift** morphs smoothly from one seed to the next, so the randomness animates instead of jumping; **Drift Speed** is in seeds per second.
+
+For every other drawing these controls do nothing. `Randomused` on `ndga` and the Random section title in the UI say which case you are in.
+
+### Audio-reactive / external control
+Drive any custom parameter of `ndga` in the usual TouchDesigner way:
+- an expression such as `op('audio')['low']`;
+- a CHOP export;
+- a bind.
+
+The UI shows the parameter in its driven mode (the expression is visible and the value moves) and **never overwrites it**. Every UI write checks the parameter mode first. `Dessin` can be driven too, for example by a counter for auto-play; `<` / `>` then do nothing, and a badge in the header says why.
+
+Read-only parameters: Engine, the `*dessin` parameters, Points and Randomused.
+
+## Parameters
+Everything is on the custom pages of `/project1/ndga`:
+
+| Page | What |
+|---|---|
+| **Global** | **Dessin** (1–300), Engine (read-only), Scale, Autofit (GPU fit to frame), Rotate, Offset, base Color, animation Speed, Points (readout) |
+| **Random** | **Seed**, *Drift* and Drift Speed (see [Random](#random)); *Randomused* readout |
+| **Texture** | TOP lookup that colours the lines (see [Texture](#texture)) |
+| Polar, Morph, Circles, Koch, Motif, Lines, Field, Implicit, IFS, Glyph, Turtle | live parameters for each engine: resolution / density, depth offsets, phase / warp / twist, animation toggles |
+
+**Autofit.** Some drawings leave the frame, as they already do in the book (see below). *Autofit* fits any drawing into ±0.95 on the GPU.
+
+## Texture
+The **Texture** page colours the drawing from any TOP, on the GPU (`ndga/texture`):
+
+```
+color → seglen → cum (prefix sum: arc length, strip ordinal) → coord (Tuv) → lookupTexture POP → blend → out
+```
+
+| Parameter | What |
+|---|---|
+| **Texture on**, **Texture TOP** | enable, and the TOP to sample (any resolution; the demo uses `lookuptext`) |
+| **Coordinate** | where the lookup coordinate comes from: **Position XY** (u, v = x, y) · **Polar** (u = angle, v = radius from the centre) · **Along strip** (arc length inside each line, 0 at its start, 1 at its end) · **Strip number** · **Point number** |
+| **Space** | for XY / Polar: **Frame** (the ±1 square → 0..1) or **Bounds** (the drawing's bounding box → 0..1) |
+| **Lookup** | **Normalized** (0..1 spans the texture) or **Sample index** (Along / Strip / Point only: the raw integer index is the pixel, so line N takes pixel N of an N×1 ramp) |
+| **Extend** | Hold / Zero / Repeat / Mirror outside the texture |
+| **Interpolate**, **Pixel centered** | as on the lookupTexture POP |
+| **Scale UV**, **Offset UV**, **Scroll UV / sec** | `uv · scale + offset + scroll · time` — scroll animates the texture along the chosen coordinate |
+| **Blend**, **Mix** | Replace / Multiply / Add over the base Color, mixed by Mix; alpha is kept |
+
+1D coordinates (Along, Strip, Point) sample the middle row (`v = 0.5`), or row 0 with Sample index. With the texture off, or with no TOP, the block is bypassed and the lines keep the base Color.
+
+## How it works
+
+### One contract for every engine
+The book's programs drive a pen plotter:
+- `M x,y` lifts the pen and moves it;
+- `D x,y` draws a line to the point.
+
+A drawing is therefore a sequence of polylines. Every engine follows the same chain:
+
+```
+meta (per-DESSIN constants from the book)
+  → pts          gridPOP, N points (N = upper bound)
+  → gen          glsladvancedPOP: writes P, LineBreak (= plotter "M"), [Alive]
+  → [cull]       deletePOP Alive == 0     (paths of variable length, pruned trees, unused glyph rows)
+  → strips       linebreakPOP             (one line strip per pen-down run)
+  → out
+```
+
+The engine outputs are then combined:
+
+```
+switch_engine → autofit → fit (scale / rotate / offset) → color → texture → out_vector
+```
+
+The output space is `x, y ∈ [-1, 1]`, y-up, with an int `LineBreak` and a float4 `Color` per point; the book's 480-pixel plotter space is normalised to it. Everything is computed in `float`, without the `int()` rounding of the plotter strings. This removes duplicate and zero-length points.
+
+### Engines
+
+| Engine | DESSIN | GPU mapping |
+|---|---|---|
+| `engine_motif` | 1–20 | thread = (copy, vertex). The copy index is decoded in mixed radix into the K transforms (mirrors, rotations, lattice). |
+| `engine_glyph` | 21–29, 287–300 | Faces and crowd glyphs come from a table fed to the shader through `dattoPOP`. Thread = (instance, table row); rows that are not the instance's glyph are culled. |
+| `engine_polar` | 30–59 | thread = point. The formulas are a `switch` on DESSIN. |
+| `engine_koch` | 60–69 | Each vertex is computed **directly from the base-4 digits of its index** (sum of sub-generator chords × Gᵈ). No scan is needed, and the generator angle is a live parameter. |
+| `engine_lines` | 70–73, 213–246 | Independent segments: Cantor chords, moirés, projections of K-dimensional hypercubes (with a live rotation of the projection basis). |
+| `engine_turtle` | 74–76, 143–212 | See below. |
+| `engine_field` | 77–122 | Needles and streamlines. Thread = (seed, step j) integrates j Euler steps; leaving the unit square culls the rest. |
+| `engine_morph` | 123–142 | thread = (layer, point). In-betweens of two Lissajous curves, or of a Lissajous curve and a square. |
+| `engine_implicit` | 247–250 | Random walks inside F(x,y) < 0. The walk is serial, so **one thread walks one seed** and writes all of its slots. |
+| `engine_circles` | 251–266 | thread = (cell, segment). The radius is proportional to the field F(x,y). |
+| `engine_ifs` | 267–286 | thread = (level, copy, vertex). The base-K digits of the copy index pick the chain of maps; every level is drawn, as in the book. |
+
+### The turtle (generalised Koch) engine
+This is the largest family: 73 drawings in total — 143–182 general fractals, 183–212 their rounded variants, and 74–76. In the book a turtle walks step by step, but the heading and length of each step depend **only on the digits of the step index**. Flags B, E, C and D mirror, reverse, stop and lift the pen. This makes the walk parallel:
+
+- **Steps.** `gen` computes every step vector independently.
+- **Positions.** `scan` (`accumulatePOP`) turns the steps into positions with a prefix sum.
+- **Placement.** `place` resets the sum for each curve and applies the per-drawing framing fixes of the p5 port.
+- **Rounding.** `round` (183–212) replaces every corner with the book's quarter-ellipse, S+1 points per step.
+- **Pruned trees.** Flag **C** prunes whole subtrees; for example, 177 walks 5¹⁰ ≈ 9.7M indices to draw about 4k steps. Threads are numbered by **live leaf** instead. Each thread turns its leaf ordinal into a digit path using subtree leaf counts `leaves(d) = n_terminal + n_recursive · leaves(d−1)`, so no thread is wasted.
+- **74–76.** The heading is `AA · Σ(min(v(j), K−1) + 1)`, where v is the (N−1)-adic valuation. It is computed in closed form with Legendre's formula `Σ floor(i / bᵗ)`.
+
+### Shader sources
+The compute shaders live inside the `.toe`, in the `shader` DAT of each engine. A plain-text copy is exported to [`touchdesigner/shaders/`](touchdesigner/shaders) for reading and diffing on GitHub; the `.toe` is the source of truth. Each shader starts with a header comment that explains its mapping. `ndga/agents_md` inside the project documents the network, the traps and the deviations.
+
+## Differences from the book
+Deliberate changes:
+- **Randomness.** Random drawings (77–102, 247–250, 287, 288, 290, 291, 297–300) use a **seeded** hash instead of an unseeded `random()`: same Seed, same drawing. *Drift* animates it.
+- **153–161.** Depth is capped so that a curve has at most 300k steps: 158–161 are drawn at K = 6, while the book asks for 7⁷ … 7¹⁰ steps.
+- **247–250.** Random walks are capped at *Max Steps*; the book leaves them unbounded. The default is 20 % of the book's seeds.
+- **Lone points.** Threads or walks that would produce a single point (leaving on the first step) are dropped, because a lone point is a degenerate stroke.
+- **74–76.** The closing segment of `TRACE` (end → start) is omitted.
+- **Circle grids.** Every circle uses a fixed number of segments. In the book the segment count equals the pixel radius, so small circles turn into triangles and diamonds.
+- **Koch.** Layers with a smaller depth are resampled to a common point count. When the generator angle is not 60°, the curve is renormalised so that the polygons stay closed.
+
+Kept as in the p5 port (the book images show the same):
+- 300 overflows at the bottom;
+- 130, 135, 137, 142 and motifs 12 and 18 leave the frame (use Autofit);
+- 67, 91 and 126 are marked *"output not correct"* by the p5 port itself.
+
+## Files
+```
+nouveaux_dessins_geometriques_et_artistiques.toe   the TouchDesigner project (everything lives in /project1/ndga)
+touchdesigner/shaders/*.glsl                       exported compute shaders (one per engine; turtle: + _place, _round;
+                                                   texture_*: the Texture block)
+touchdesigner/img/                                 preview renders and the Perform-mode screenshot used in this README
+sketches/, img/                                    original p5.js sketches and book renders by v3ga
+```
+
+## Credits and license
+- **Programs and book:** [Jean-Paul Delahaye](https://fr.wikipedia.org/wiki/Jean-Paul_Delahaye), *Nouveaux dessins géométriques et artistiques avec votre micro-ordinateur*, Eyrolles, 1985.
+- **p5.js recoding, parser library and gallery:** [v3ga](https://github.com/v3ga/nouveaux_dessins_geometriques_et_artistiques). With thanks to Jean-Noël Lafargue and Éric Schrafstetter, credited in the original README below.
+- **TouchDesigner POPs port:** this fork.
+
+This fork is distributed under the same license as the original repository, the **GNU General Public License v2.0**; see [LICENSE](LICENSE).
+
+---
+
+# Original project (v3ga)
+
 # Nouveaux dessins géométriques et artistiques avec votre micro-ordinateur
 
 👉 [https://editor.p5js.org/v3ga/collections/Q6wJic-1k](https://editor.p5js.org/v3ga/collections/Q6wJic-1k)
